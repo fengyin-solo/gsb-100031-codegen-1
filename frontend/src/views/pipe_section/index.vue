@@ -3,61 +3,47 @@
     <header class="page-head">
       <div>
         <h2>管段档案管理</h2>
-        <p class="page-desc">维护管段，围绕管段编号、管线类型、材质规格、埋设深度做登记、筛选与状态流转。</p>
+        <p class="page-desc">
+          保留管段编号、管线类型、材质规格、埋设深度；总览工作台可在"按管线"与"按空间位置"间切换，
+          在役、废弃分别成组；坐标缺失或编号重复只标记待补、不静默丢弃，可直接修正。
+        </p>
       </div>
       <div class="page-actions">
-        <button class="btn primary" type="button" @click="openCreate">登记管段</button>
         <button class="btn" type="button" @click="exportRows">导出管段档案清单</button>
       </div>
     </header>
 
-    <div class="stat-row">
-      <article v-for="item in stats" :key="item.label" class="stat-card">
-        <span class="stat-label">{{ item.label }}</span>
-        <strong class="stat-value">{{ item.value }}</strong>
-      </article>
-    </div>
+    <nav class="tab-bar">
+      <button
+        type="button"
+        class="tab-item"
+        :class="{ active: activeTab === 'workbench' }"
+        @click="activeTab = 'workbench'"
+      >
+        总览工作台
+      </button>
+      <button
+        type="button"
+        class="tab-item"
+        :class="{ active: activeTab === 'list' }"
+        @click="switchToList"
+      >
+        档案列表
+      </button>
+    </nav>
 
-    <form class="filter-bar" @submit.prevent="reload">
-      <label v-for="field in filterFields" :key="field" class="filter-item">
-        <span>{{ field }}</span>
-        <input v-model="filters[field]" :placeholder="`按${field}检索`" />
-      </label>
-      <button class="btn" type="submit">查询</button>
-      <button class="btn ghost" type="button" @click="resetFilters">重置条件</button>
-    </form>
+    <Workbench v-show="activeTab === 'workbench'" @correct="openCorrect" />
+    <ArchiveList v-if="activeTab === 'list'" @correct="openCorrect" />
 
-    <table class="data-table">
-      <thead>
-        <tr>
-          <th v-for="column in columns" :key="column">{{ column }}</th>
-          <th>可执行动作</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="row in rows" :key="String(row.id)">
-          <td v-for="column in columns" :key="column">{{ row[column] ?? '—' }}</td>
-          <td class="row-actions">
-            <button
-              v-for="action in actions"
-              :key="action"
-              class="link"
-              type="button"
-              @click="runAction(action, row)"
-            >
-              {{ action }}
-            </button>
-          </td>
-        </tr>
-        <tr v-if="!rows.length">
-          <td :colspan="columns.length + 1" class="empty-state">暂无管段档案数据，可先登记管段</td>
-        </tr>
-      </tbody>
-    </table>
+    <CorrectDialog
+      v-if="correctTarget"
+      :entry="correctTarget"
+      @close="closeCorrect"
+      @saved="onSaved"
+    />
 
-    <footer class="page-foot">
-      <span>共 {{ total }} 条管段档案记录</span>
-      <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
+    <footer v-if="store.errorMessage" class="page-foot">
+      <span class="error-text">{{ store.errorMessage }}</span>
     </footer>
   </section>
 </template>
@@ -65,66 +51,42 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 
-import { request } from '@/api/client'
+import { usePipeSectionStore, type PipeSection } from '@/stores/pipeSection'
+import Workbench from './Workbench.vue'
+import ArchiveList from './ArchiveList.vue'
+import CorrectDialog from './CorrectDialog.vue'
 
-type Row = Record<string, string | number | null>
+const store = usePipeSectionStore()
 
-const ENDPOINT = '/api/pipe_section'
-const columns = ["管段编号", "管线类型", "材质规格", "埋设深度", "建设年代", "产权单位", "所在道路", "管段状态"]
-const actions = ["封存管段", "恢复在役", "登记迁改"]
-const statuses = ["在役", "废弃", "封存", "迁改中"]
-const stats = [{"label": "在役管段", "value": 0}, {"label": "废弃管段", "value": 0}, {"label": "迁改中管段", "value": 0}]
+const activeTab = ref<'workbench' | 'list'>('workbench')
+const correctTarget = ref<PipeSection | null>(null)
 
-const rows = ref<Row[]>([])
-const total = ref(0)
-const errorMessage = ref('')
-const filters = ref<Record<string, string>>({})
-const filterFields = columns.slice(0, 3)
+function switchToList() {
+  activeTab.value = 'list'
+}
 
-function resetFilters() {
-  filters.value = {}
-  void reload()
+function openCorrect(entry: PipeSection) {
+  // 以当前最新档案为底，避免弹窗里带着陈旧的待补标记
+  const latest = store.items.find((item) => item.id === entry.id)
+  correctTarget.value = latest ?? entry
+}
+
+function closeCorrect() {
+  correctTarget.value = null
+}
+
+async function onSaved() {
+  // correctEntry 已触发 refreshAll，工作台与列表的状态、数量同步更新
+  correctTarget.value = null
 }
 
 function exportRows() {
-  window.open(`${ENDPOINT}/export`, '_blank')
+  window.open('/api/pipe_section/export', '_blank')
 }
 
-function openCreate() {
-  errorMessage.value = '管段登记入口尚未接入审批流'
-}
-
-async function runAction(action: string, row: Row) {
-  errorMessage.value = ''
-  try {
-    const response = await request(`${ENDPOINT}/${row.id}/actions`, {
-      method: 'POST',
-      body: JSON.stringify({ action }),
-    })
-    if (!response.ok) {
-      throw new Error('管段档案动作未生效，请稍后重试')
-    }
-    await reload()
-  } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '管段档案操作失败'
-  }
-}
-
-async function reload() {
-  errorMessage.value = ''
-  const query = new URLSearchParams(filters.value as Record<string, string>).toString()
-  try {
-    const response = await request(`${ENDPOINT}?${query}`)
-    if (!response.ok) {
-      throw new Error('管段列表读取失败')
-    }
-    const payload = await response.json()
-    rows.value = payload.items ?? []
-    total.value = payload.total ?? rows.value.length
-  } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '管段档案列表读取失败'
-  }
-}
-
-onMounted(reload)
+onMounted(() => {
+  // 列表数据在挂载时也拉一份：待补面板依赖 items，且切到列表页时即时可见
+  void store.fetchList()
+  void store.fetchOverview()
+})
 </script>
