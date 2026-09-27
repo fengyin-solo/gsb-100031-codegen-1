@@ -36,10 +36,10 @@ class PipeSectionEntry(BaseModel):
     field_1: str | None = None  # 管线类型
     field_2: str | None = None  # 材质规格
     field_3: str | None = None  # 埋设深度
-    field_4: str | None = None  # 建设年代
-    field_5: str | None = None  # 产权单位
-    field_6: str | None = None  # 所在道路
-    field_7: str | None = None  # 管段状态
+    field_4: str | None = None  # 空间位置
+    field_5: str | None = None  # 坐标（经度,纬度）
+    field_6: str | None = None  # 建设年代
+    field_7: str | None = None  # 产权单位
 
 class InspectEntry(BaseModel):
     """巡查记录单明细结构。"""
